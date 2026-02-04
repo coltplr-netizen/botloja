@@ -8,20 +8,12 @@ if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN não encontrado")
 
 intents = discord.Intents.default()
+intents.members = True
 
 # ========= CONFIG =========
-CARGOS_AUTORIZADOS = [1468692230607998987]
-CANAL_LOG_ID = 1442639996015214691
+CARGOS_AUTORIZADOS = [1468692230607998987]  # ID do cargo da staff
+CANAL_LOG_ID = 1442639996015214691          # ID do canal de logs
 # ==========================
-
-# Opções de estoque (tipos)
-estoques = ["Netflix", "Spotify", "Amazon Prime"]
-
-# Referência do painel
-painel_info = {
-    "canal_id": None,
-    "mensagem_id": None
-}
 
 
 class Bot(discord.Client):
@@ -45,41 +37,25 @@ def autorizado(member: discord.Member) -> bool:
 
 
 def montar_embed_painel() -> discord.Embed:
-    descricao = (
-        "**Estoques disponíveis:**\n"
-        + ("\n".join(f"• {e}" for e in estoques) if estoques else "Nenhum disponível")
-    )
-
     return discord.Embed(
-        title="🛒 Pedir Estoque",
+        title="🛒 Pedir Stock",
         description=(
-            "Está precisando de algo que está fora de estoque? Peça aqui!.\n\n"
-            + descricao
+            "**Clique no botão abaixo para solicitar um produto.**\n\n"
+            "📌 **Como funciona:**\n"
+            "**• Envie seu pedido**\n"
+            "**• Nossa equipe analisa**\n"
+            "**• Você será avisado quando estiver disponível**\n\n"
+            "**⏰ Atendimento 24/7**"
         ),
         color=discord.Color.blurple()
     )
 
 
-async def atualizar_painel(guild: discord.Guild):
-    if not painel_info["canal_id"] or not painel_info["mensagem_id"]:
-        return
-
-    canal = guild.get_channel(painel_info["canal_id"])
-    if not canal:
-        return
-
-    try:
-        msg = await canal.fetch_message(painel_info["mensagem_id"])
-        await msg.edit(embed=montar_embed_painel(), view=PainelView())
-    except discord.NotFound:
-        pass
-
-
 # ========= MODAL =========
-class PedidoEstoqueModal(Modal, title="📦 Pedido de Estoque"):
-    estoque = TextInput(
-        label="Qual estoque você quer?",
-        placeholder="Ex: Netflix",
+class PedidoModal(Modal, title="📦 Pedido"):
+    pedido = TextInput(
+        label="O que você deseja?",
+        placeholder="Descreva seu pedido",
         required=True
     )
 
@@ -94,14 +70,18 @@ class PedidoEstoqueModal(Modal, title="📦 Pedido de Estoque"):
 
         embed = discord.Embed(title="📦 Novo pedido", color=discord.Color.green())
         embed.add_field(name="Usuário", value=interaction.user.mention, inline=False)
-        embed.add_field(name="Estoque", value=self.estoque.value, inline=False)
-        embed.add_field(name="Obs", value=self.observacao.value or "Nenhuma", inline=False)
+        embed.add_field(name="Pedido", value=self.pedido.value, inline=False)
+        embed.add_field(
+            name="Observação",
+            value=self.observacao.value or "Nenhuma",
+            inline=False
+        )
 
         if canal_log:
             await canal_log.send(embed=embed)
 
         await interaction.response.send_message(
-            "✅ Pedido enviado com sucesso!",
+            "✅ Sua solicitação foi enviada! Aguarde.",
             ephemeral=True
         )
 
@@ -113,11 +93,11 @@ class PainelView(View):
 
     @discord.ui.button(label="📦 Pedir estoque", style=discord.ButtonStyle.primary)
     async def pedir(self, interaction: discord.Interaction, _):
-        await interaction.response.send_modal(PedidoEstoqueModal())
+        await interaction.response.send_modal(PedidoModal())
 
 
 # ========= COMANDO PAINEL =========
-@bot.tree.command(name="painel", description="Envia o painel de estoque")
+@bot.tree.command(name="painel", description="Envia o painel da loja")
 @app_commands.describe(canal="Canal onde o painel será enviado")
 async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
 
@@ -125,10 +105,7 @@ async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
         await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
         return
 
-    msg = await canal.send(embed=montar_embed_painel(), view=PainelView())
-
-    painel_info["canal_id"] = canal.id
-    painel_info["mensagem_id"] = msg.id
+    await canal.send(embed=montar_embed_painel(), view=PainelView())
 
     await interaction.response.send_message(
         f"✅ Painel enviado em {canal.mention}",
@@ -136,59 +113,45 @@ async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
     )
 
 
-# ========= STOCK OPTIONS =========
-
-@bot.tree.command(name="stock_option_add", description="Adiciona opções de estoque (separadas por vírgula)")
-async def stock_option_add(interaction: discord.Interaction, nomes: str):
-
+# ========= COMANDO APROVAR =========
+@bot.tree.command(name="aprovar", description="Avisa usuários que o pedido está disponível")
+@app_commands.describe(
+    usuarios="Usuários que serão avisados",
+    pedido="Nome do pedido (ex: Carro)"
+)
+async def aprovar(
+    interaction: discord.Interaction,
+    usuarios: str,
+    pedido: str
+):
     if not autorizado(interaction.user):
         await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
         return
 
-    adicionados = []
-    for nome in [n.strip() for n in nomes.split(",")]:
-        if nome and nome not in estoques:
-            estoques.append(nome)
-            adicionados.append(nome)
+    enviados = []
+    falha = []
 
-    await atualizar_painel(interaction.guild)
+    for palavra in usuarios.split():
+        if palavra.startswith("<@") and palavra.endswith(">"):
+            user_id = int(palavra.replace("<@", "").replace(">", "").replace("!", ""))
+            user = interaction.guild.get_member(user_id)
+
+            if user:
+                try:
+                    await user.send(
+                        f"**👋 Olá, {user.mention}!**\n\n"
+                        f"**✅ Seu pedido {pedido} já está disponível na loja.**\n"
+                        f"**Compre enquanto há tempo 👀.**\n"
+                    )
+                    enviados.append(user.mention)
+                except:
+                    falha.append(user.mention)
 
     await interaction.response.send_message(
-        f"✅ Adicionados: {', '.join(adicionados) if adicionados else 'Nenhum'}",
+        f"📨 Avisados: {', '.join(enviados) if enviados else 'Nenhum'}\n"
+        f"⚠️ Falha: {', '.join(falha) if falha else 'Nenhuma'}",
         ephemeral=True
     )
-
-
-@bot.tree.command(name="stock_option_remove", description="Remove opções de estoque (separadas por vírgula)")
-async def stock_option_remove(interaction: discord.Interaction, nomes: str):
-
-    if not autorizado(interaction.user):
-        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
-        return
-
-    removidos = []
-    for nome in [n.strip() for n in nomes.split(",")]:
-        if nome in estoques:
-            estoques.remove(nome)
-            removidos.append(nome)
-
-    await atualizar_painel(interaction.guild)
-
-    await interaction.response.send_message(
-        f"🗑️ Removidos: {', '.join(removidos) if removidos else 'Nenhum'}",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="stock_option_list", description="Lista as opções de estoque")
-async def stock_option_list(interaction: discord.Interaction):
-
-    if not autorizado(interaction.user):
-        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
-        return
-
-    msg = "\n".join(f"• {e}" for e in estoques) if estoques else "Nenhum estoque."
-    await interaction.response.send_message(f"📦 **Opções:**\n{msg}", ephemeral=True)
 
 
 bot.run(TOKEN)
