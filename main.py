@@ -2,6 +2,7 @@ import os
 import discord
 from discord import app_commands
 from discord.ui import View, Modal, TextInput
+from datetime import datetime
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
@@ -112,6 +113,36 @@ async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
         ephemeral=True
     )
 
+# ===== CONFIG TICKET =====
+TICKET_CATEGORIA_ID = 1442639995516096563   # ID da categoria onde os tickets ficam
+CANAL_LOG_TICKET_ID = 1442639996015214690   # ID do canal de logs
+CARGO_STAFF_ID = 1442639992823484467        # ID do cargo da staff
+
+TICKET_OPCOES = [
+    "Suporte",
+    "Denúncias",
+    "Problema com produtos",
+    "Falar com Rugal"
+]
+
+tickets_ativos = {}  # channel_id -> dados
+
+# ===== TICKETS CONFIG =====
+TICKET_CATEGORIA_ID = 1442639995516096563  # Categoria onde os tickets serão criados
+CANAL_LOG_TICKET_ID = 123456789012345678  # Canal de logs
+CARGO_STAFF_ID = 1442639992823484467       # Cargo da staff
+
+ticket_opcoes = [
+    "Suporte",
+    "Denúncias",
+    "Problema com produtos",
+    "Falar com Rugal"
+]
+
+tickets_ativos = {}  # channel_id -> dados do ticket
+
+def is_staff(member: discord.Member) -> bool:
+    return any(role.id == CARGO_STAFF_ID for role in member.roles)
 
 # ========= COMANDO APROVAR =========
 @bot.tree.command(name="aprovar", description="Avisa usuários que o pedido está disponível")
@@ -153,5 +184,139 @@ async def aprovar(
         ephemeral=True
     )
 
+@bot.tree.command(name="painel_ticket", description="Envia o painel de tickets")
+@app_commands.describe(canal="Canal onde o painel será enviado")
+async def painel_ticket(interaction: discord.Interaction, canal: discord.TextChannel):
+
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="🎫 Sistema de Atendimento",
+        description=(
+            "**HORÁRIOS DE ATENDIMENTO**\n"
+            "Segunda a Sábado (08:00 às 22:00)\n\n"
+            "**SUPORTE**\n"
+            "Selecione abaixo o motivo do seu ticket.\n\n"
+            "_Antes de abrir um ticket, leia nossos termos._"
+        ),
+        color=discord.Color.dark_blue()
+    )
+
+    await canal.send(embed=embed, view=TicketPanelView())
+    await interaction.response.send_message("✅ Painel enviado.", ephemeral=True)
+
+class TicketControlView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🙋 Assumir", style=discord.ButtonStyle.success)
+    async def assumir(self, interaction: discord.Interaction, _):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("❌ Apenas a staff pode assumir.", ephemeral=True)
+            return
+
+        dados = tickets_ativos.get(interaction.channel.id)
+
+        if dados and not dados["assumido_por"]:
+            dados["assumido_por"] = interaction.user
+            await interaction.channel.send(
+                f"🙋 Ticket assumido por {interaction.user.mention}"
+            )
+
+        await interaction.response.defer()
+
+    @discord.ui.button(label="🔒 Fechar", style=discord.ButtonStyle.danger)
+    async def fechar(self, interaction: discord.Interaction, _):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("❌ Apenas a staff pode fechar.", ephemeral=True)
+            return
+
+        dados = tickets_ativos.get(interaction.channel.id)
+        if not dados:
+            return
+
+        fechamento = datetime.utcnow()
+        duracao = fechamento - dados["abertura"]
+
+        embed = discord.Embed(
+            title="🎫 Seu Ticket Foi Finalizado!",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="🔒 Fechado por", value=interaction.user.mention, inline=False)
+        embed.add_field(
+            name="🙋 Responsável pelo atendimento",
+            value=dados["assumido_por"].mention if dados["assumido_por"] else "Não assumido",
+            inline=False
+        )
+        embed.add_field(name="📂 Categoria", value=dados["motivo"], inline=False)
+        embed.add_field(name="⏳ Duração", value=str(duracao).split(".")[0], inline=False)
+
+        # DM
+        try:
+            await dados["usuario"].send(embed=embed)
+        except:
+            pass
+
+        # LOG
+        canal_log = interaction.guild.get_channel(CANAL_LOG_TICKET_ID)
+        if canal_log:
+            await canal_log.send(embed=embed)
+
+        await interaction.channel.delete()
+
+class TicketSelect(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label=opcao, value=opcao)
+            for opcao in TICKET_OPCOES
+        ]
+
+        super().__init__(
+            placeholder="Selecione o motivo do seu ticket",
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        motivo = self.values[0]
+
+        categoria = interaction.guild.get_channel(TICKET_CATEGORIA_ID)
+
+        canal = await interaction.guild.create_text_channel(
+            name=f"ticket-{interaction.user.name}".lower(),
+            category=categoria
+        )
+
+        await canal.set_permissions(interaction.guild.default_role, view_channel=False)
+        await canal.set_permissions(interaction.user, view_channel=True, send_messages=True)
+
+        for role in interaction.guild.roles:
+            if role.id == CARGO_STAFF_ID:
+                await canal.set_permissions(role, view_channel=True, send_messages=True)
+
+        tickets_ativos[canal.id] = {
+            "usuario": interaction.user,
+            "motivo": motivo,
+            "abertura": datetime.utcnow(),
+            "assumido_por": None
+        }
+
+        await canal.send(
+            f"{interaction.user.mention} 🎫 Ticket criado (**{motivo}**)",
+            view=TicketControlView()
+        )
+
+        await interaction.response.send_message(
+            f"✅ Seu ticket foi criado em {canal.mention}",
+            ephemeral=True
+        )
+
+
+class TicketPanelView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
 
 bot.run(TOKEN)
+
