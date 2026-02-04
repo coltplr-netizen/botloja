@@ -14,23 +14,22 @@ intents = discord.Intents.default()
 intents.members = True
 
 # ========= CONFIG GERAL =========
-CARGOS_AUTORIZADOS = [1468692230607998987]  # Cargo que pode usar painel/aprovar
-CANAL_LOG_PEDIDOS = 1442639996015214691    # Log dos pedidos da loja
+CARGOS_AUTORIZADOS = [1468692230607998987]
+CANAL_LOG_PEDIDOS = 1442639996015214691
 
 # ========= CONFIG TICKETS =========
 TICKET_CATEGORIA_ID = 1442639995516096563
 CANAL_LOG_TICKET_ID = 1442639996015214690
 CARGO_STAFF_ID = 1442639992823484467
 
-TICKET_OPCOES = [
+ticket_opcoes = [
     "Suporte",
     "Denúncias",
     "Problema com produtos",
     "Falar com Rugal"
 ]
 
-tickets_ativos = {}  # channel_id -> dados do ticket
-
+tickets_ativos = {}  # channel_id -> dados
 
 # ========= BOT =========
 class Bot(discord.Client):
@@ -44,7 +43,6 @@ class Bot(discord.Client):
     async def on_ready(self):
         print(f"🤖 Online como {self.user}")
 
-
 bot = Bot()
 
 # ========= HELPERS =========
@@ -55,32 +53,21 @@ def is_staff(member: discord.Member) -> bool:
     return any(role.id == CARGO_STAFF_ID for role in member.roles)
 
 # ========= PAINEL LOJA =========
-def montar_embed_painel() -> discord.Embed:
+def montar_embed_painel():
     return discord.Embed(
         title="🛒 Pedir Stock",
         description=(
             "**Clique no botão abaixo para solicitar um produto.**\n\n"
-            "📌 **Como funciona:**\n"
             "• Envie seu pedido\n"
             "• Nossa equipe analisa\n"
-            "• Você será avisado quando estiver disponível\n\n"
-            "⏰ Atendimento 24/7"
+            "• Você será avisado quando disponível"
         ),
         color=discord.Color.blurple()
     )
 
 class PedidoModal(Modal, title="📦 Pedido"):
-    pedido = TextInput(
-        label="O que você deseja?",
-        placeholder="Descreva seu pedido",
-        required=True
-    )
-
-    observacao = TextInput(
-        label="Observação (opcional)",
-        style=discord.TextStyle.paragraph,
-        required=False
-    )
+    pedido = TextInput(label="O que você deseja?", required=True)
+    observacao = TextInput(label="Observação", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         canal_log = interaction.guild.get_channel(CANAL_LOG_PEDIDOS)
@@ -88,19 +75,12 @@ class PedidoModal(Modal, title="📦 Pedido"):
         embed = discord.Embed(title="📦 Novo pedido", color=discord.Color.green())
         embed.add_field(name="Usuário", value=interaction.user.mention, inline=False)
         embed.add_field(name="Pedido", value=self.pedido.value, inline=False)
-        embed.add_field(
-            name="Observação",
-            value=self.observacao.value or "Nenhuma",
-            inline=False
-        )
+        embed.add_field(name="Obs", value=self.observacao.value or "Nenhuma", inline=False)
 
         if canal_log:
             await canal_log.send(embed=embed)
 
-        await interaction.response.send_message(
-            "✅ Sua solicitação foi enviada! Aguarde.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("✅ Pedido enviado!", ephemeral=True)
 
 class PainelView(View):
     def __init__(self):
@@ -110,66 +90,39 @@ class PainelView(View):
     async def pedir(self, interaction: discord.Interaction, _):
         await interaction.response.send_modal(PedidoModal())
 
-@bot.tree.command(name="painel", description="Envia o painel da loja")
-@app_commands.describe(canal="Canal onde o painel será enviado")
+@bot.tree.command(name="painel")
 async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
     if not autorizado(interaction.user):
-        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
-        return
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
 
     await canal.send(embed=montar_embed_painel(), view=PainelView())
-    await interaction.response.send_message(
-        f"✅ Painel enviado em {canal.mention}",
-        ephemeral=True
-    )
-
-# ========= COMANDO APROVAR =========
-@bot.tree.command(name="aprovar", description="Avisa usuários que o pedido está disponível")
-@app_commands.describe(
-    usuarios="Usuários que serão avisados",
-    pedido="Nome do pedido"
-)
-async def aprovar(interaction: discord.Interaction, usuarios: str, pedido: str):
-    if not autorizado(interaction.user):
-        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
-        return
-
-    enviados = []
-    falha = []
-
-    for palavra in usuarios.split():
-        if palavra.startswith("<@") and palavra.endswith(">"):
-            user_id = int(palavra.replace("<@", "").replace(">", "").replace("!", ""))
-            user = interaction.guild.get_member(user_id)
-
-            if user:
-                try:
-                    await user.send(
-                        f"👋 Olá, {user.mention}!\n\n"
-                        f"✅ Seu pedido **{pedido}** já está disponível na loja.\n"
-                        f"Entre em contato para finalizar."
-                    )
-                    enviados.append(user.mention)
-                except:
-                    falha.append(user.mention)
-
-    await interaction.response.send_message(
-        f"📨 Avisados: {', '.join(enviados) if enviados else 'Nenhum'}\n"
-        f"⚠️ Falha: {', '.join(falha) if falha else 'Nenhuma'}",
-        ephemeral=True
-    )
+    await interaction.response.send_message("✅ Painel enviado.", ephemeral=True)
 
 # ========= TICKETS =========
+def embed_ticket_aberto(user, motivo):
+    embed = discord.Embed(
+        title="🎫 Ticket Aberto",
+        description=(
+            f"Bem-vindo {user.mention}\n\n"
+            f"📂 **Motivo:** {motivo}\n\n"
+            "Aguarde o atendimento da equipe."
+        ),
+        color=discord.Color.blue()
+    )
+    return embed
+
+def embed_painel_staff():
+    return discord.Embed(
+        title="🛠️ Painel Staff",
+        description="Uso exclusivo da equipe.",
+        color=discord.Color.dark_grey()
+    )
+
 class TicketSelect(Select):
     def __init__(self):
-        options = [
-            discord.SelectOption(label=opcao, value=opcao)
-            for opcao in TICKET_OPCOES
-        ]
-
         super().__init__(
             placeholder="Selecione o motivo do seu ticket",
-            options=options
+            options=[discord.SelectOption(label=o, value=o) for o in ticket_opcoes]
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -177,7 +130,7 @@ class TicketSelect(Select):
         categoria = interaction.guild.get_channel(TICKET_CATEGORIA_ID)
 
         canal = await interaction.guild.create_text_channel(
-            name=f"ticket-{interaction.user.name}".lower(),
+            f"ticket-{interaction.user.name}".lower(),
             category=categoria
         )
 
@@ -196,97 +149,118 @@ class TicketSelect(Select):
         }
 
         await canal.send(
-            f"{interaction.user.mention} 🎫 Ticket criado (**{motivo}**)",
-            view=TicketControlView()
+            embed=embed_ticket_aberto(interaction.user, motivo),
+            view=TicketMainView()
         )
 
-        await interaction.response.send_message(
-            f"✅ Seu ticket foi criado em {canal.mention}",
-            ephemeral=True
-        )
+        await interaction.response.send_message(f"✅ Ticket criado: {canal.mention}", ephemeral=True)
 
 class TicketPanelView(View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(TicketSelect())
 
-class TicketControlView(View):
+class TicketMainView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="🙋 Assumir", style=discord.ButtonStyle.success)
     async def assumir(self, interaction: discord.Interaction, _):
         if not is_staff(interaction.user):
-            await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
-            return
+            return await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
 
         dados = tickets_ativos.get(interaction.channel.id)
-        if dados and not dados["assumido_por"]:
+        if dados:
             dados["assumido_por"] = interaction.user
-            await interaction.channel.send(
-                f"🙋 Ticket assumido por {interaction.user.mention}"
-            )
-
+            await interaction.channel.send(f"🙋 Assumido por {interaction.user.mention}")
         await interaction.response.defer()
 
     @discord.ui.button(label="🔒 Fechar", style=discord.ButtonStyle.danger)
     async def fechar(self, interaction: discord.Interaction, _):
         if not is_staff(interaction.user):
-            await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
-            return
+            return await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
 
         dados = tickets_ativos.get(interaction.channel.id)
-        if not dados:
-            return
-
         fechamento = datetime.utcnow()
         duracao = fechamento - dados["abertura"]
 
-        embed = discord.Embed(
-            title="🎫 Seu Ticket Foi Finalizado!",
-            color=discord.Color.red()
-        )
-        embed.add_field(name="🔒 Fechado por", value=interaction.user.mention, inline=False)
-        embed.add_field(
-            name="🙋 Responsável pelo atendimento",
-            value=dados["assumido_por"].mention if dados["assumido_por"] else "Não assumido",
-            inline=False
-        )
-        embed.add_field(name="📂 Categoria", value=dados["motivo"], inline=False)
-        embed.add_field(name="⏳ Duração", value=str(duracao).split(".")[0], inline=False)
+        embed = discord.Embed(title="🎫 Ticket Finalizado", color=discord.Color.red())
+        embed.add_field(name="Fechado por", value=interaction.user.mention)
+        embed.add_field(name="Responsável", value=dados["assumido_por"].mention if dados["assumido_por"] else "Ninguém")
+        embed.add_field(name="Motivo", value=dados["motivo"])
+        embed.add_field(name="Duração", value=str(duracao).split(".")[0])
 
         try:
             await dados["usuario"].send(embed=embed)
         except:
             pass
 
-        canal_log = interaction.guild.get_channel(CANAL_LOG_TICKET_ID)
-        if canal_log:
-            await canal_log.send(embed=embed)
+        log = interaction.guild.get_channel(CANAL_LOG_TICKET_ID)
+        if log:
+            await log.send(embed=embed)
 
         await interaction.channel.delete()
 
-@bot.tree.command(name="painel_ticket", description="Envia o painel de tickets")
-@app_commands.describe(canal="Canal onde o painel será enviado")
+    @discord.ui.button(label="🛠️ Painel Staff", style=discord.ButtonStyle.secondary)
+    async def painel_staff(self, interaction: discord.Interaction, _):
+        if not is_staff(interaction.user):
+            return await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
+
+        await interaction.response.edit_message(embed=embed_painel_staff(), view=TicketStaffView())
+
+class TicketStaffView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔙 Voltar", style=discord.ButtonStyle.danger)
+    async def voltar(self, interaction: discord.Interaction, _):
+        dados = tickets_ativos.get(interaction.channel.id)
+        await interaction.response.edit_message(
+            embed=embed_ticket_aberto(dados["usuario"], dados["motivo"]),
+            view=TicketMainView()
+        )
+
+@bot.tree.command(name="painel_ticket")
 async def painel_ticket(interaction: discord.Interaction, canal: discord.TextChannel):
     if not is_staff(interaction.user):
-        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
-        return
+        return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
 
     embed = discord.Embed(
         title="🎫 Sistema de Atendimento",
-        description=(
-            "**HORÁRIOS DE ATENDIMENTO**\n"
-            "Segunda a Sábado (08:00 às 22:00)\n\n"
-            "**SUPORTE**\n"
-            "Selecione abaixo o motivo do seu ticket.\n\n"
-            "_Antes de abrir um ticket, leia nossos termos._"
-        ),
+        description="Selecione o motivo do seu ticket abaixo.",
         color=discord.Color.dark_blue()
     )
 
     await canal.send(embed=embed, view=TicketPanelView())
     await interaction.response.send_message("✅ Painel enviado.", ephemeral=True)
+
+# ========= COMANDOS CONFIG TICKET =========
+@bot.tree.command(name="ticket_opcao_add")
+async def ticket_opcao_add(interaction: discord.Interaction, nome: str):
+    if not is_staff(interaction.user):
+        return await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
+
+    if nome in ticket_opcoes:
+        return await interaction.response.send_message("⚠️ Opção já existe.", ephemeral=True)
+
+    ticket_opcoes.append(nome)
+    await interaction.response.send_message(f"✅ Opção **{nome}** adicionada.", ephemeral=True)
+
+@bot.tree.command(name="ticket_opcao_remove")
+async def ticket_opcao_remove(interaction: discord.Interaction, nome: str):
+    if not is_staff(interaction.user):
+        return await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
+
+    if nome not in ticket_opcoes:
+        return await interaction.response.send_message("⚠️ Opção não encontrada.", ephemeral=True)
+
+    ticket_opcoes.remove(nome)
+    await interaction.response.send_message(f"🗑️ Opção **{nome}** removida.", ephemeral=True)
+
+@bot.tree.command(name="ticket_opcao_list")
+async def ticket_opcao_list(interaction: discord.Interaction):
+    texto = "\n".join(f"• {o}" for o in ticket_opcoes)
+    await interaction.response.send_message(f"📂 Opções:\n{texto}", ephemeral=True)
 
 # ========= RUN =========
 bot.run(TOKEN)
