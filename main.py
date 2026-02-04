@@ -9,17 +9,19 @@ if not TOKEN:
 
 intents = discord.Intents.default()
 
-# ========= CONFIGURAÇÕES =========
-CARGOS_AUTORIZADOS = [1468692230607998987]  # ID do cargo autorizado
-CANAL_LOG_ID = 1442639996015214691          # ID do canal de logs
-# =================================
+# ========= CONFIG =========
+CARGOS_AUTORIZADOS = [1468692230607998987]
+CANAL_LOG_ID = 1442639996015214691
+# ==========================
 
-# Estoques (em memória)
-estoques = [
-    "Netflix",
-    "Spotify",
-    "Amazon Prime"
-]
+# Opções de estoque (tipos)
+estoques = ["Netflix", "Spotify", "Amazon Prime"]
+
+# Referência do painel
+painel_info = {
+    "canal_id": None,
+    "mensagem_id": None
+}
 
 
 class Bot(discord.Client):
@@ -37,15 +39,46 @@ class Bot(discord.Client):
 bot = Bot()
 
 
-# ========= FUNÇÃO AUXILIAR =========
-def usuario_autorizado(member: discord.Member) -> bool:
+# ========= HELPERS =========
+def autorizado(member: discord.Member) -> bool:
     return any(role.id in CARGOS_AUTORIZADOS for role in member.roles)
+
+
+def montar_embed_painel() -> discord.Embed:
+    descricao = (
+        "**Estoques disponíveis:**\n"
+        + ("\n".join(f"• {e}" for e in estoques) if estoques else "Nenhum disponível")
+    )
+
+    return discord.Embed(
+        title="🛒 Pedir Estoque",
+        description=(
+            "Está precisando de algo que está fora de estoque? Peça aqui!.\n\n"
+            + descricao
+        ),
+        color=discord.Color.blurple()
+    )
+
+
+async def atualizar_painel(guild: discord.Guild):
+    if not painel_info["canal_id"] or not painel_info["mensagem_id"]:
+        return
+
+    canal = guild.get_channel(painel_info["canal_id"])
+    if not canal:
+        return
+
+    try:
+        msg = await canal.fetch_message(painel_info["mensagem_id"])
+        await msg.edit(embed=montar_embed_painel(), view=PainelView())
+    except discord.NotFound:
+        pass
 
 
 # ========= MODAL =========
 class PedidoEstoqueModal(Modal, title="📦 Pedido de Estoque"):
     estoque = TextInput(
-        label="Qual estoque deseja?",
+        label="Qual estoque você quer?",
         placeholder="Ex: Netflix",
         required=True
     )
@@ -59,19 +92,16 @@ class PedidoEstoqueModal(Modal, title="📦 Pedido de Estoque"):
     async def on_submit(self, interaction: discord.Interaction):
         canal_log = interaction.guild.get_channel(CANAL_LOG_ID)
 
-        embed = discord.Embed(
-            title="📦 Novo pedido de estoque",
-            color=discord.Color.green()
-        )
+        embed = discord.Embed(title="📦 Novo pedido", color=discord.Color.green())
         embed.add_field(name="Usuário", value=interaction.user.mention, inline=False)
         embed.add_field(name="Estoque", value=self.estoque.value, inline=False)
-        embed.add_field(name="Observação", value=self.observacao.value or "Nenhuma", inline=False)
+        embed.add_field(name="Obs", value=self.observacao.value or "Nenhuma", inline=False)
 
         if canal_log:
             await canal_log.send(embed=embed)
 
         await interaction.response.send_message(
-            "✅ Seu pedido foi enviado com sucesso!",
+            "✅ Pedido enviado com sucesso!",
             ephemeral=True
         )
 
@@ -87,28 +117,18 @@ class PainelView(View):
 
 
 # ========= COMANDO PAINEL =========
-@bot.tree.command(name="painel", description="Envia o painel de pedidos de estoque")
+@bot.tree.command(name="painel", description="Envia o painel de estoque")
 @app_commands.describe(canal="Canal onde o painel será enviado")
 async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
 
-    if not usuario_autorizado(interaction.user):
-        await interaction.response.send_message(
-            "❌ Você não tem permissão para usar este comando.",
-            ephemeral=True
-        )
+    if not autorizado(interaction.user):
+        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
         return
 
-    embed = discord.Embed(
-        title="🛒 Pedido de Estoque",
-        description=(
-            "Clique no botão abaixo para solicitar um estoque.\n\n"
-            "**Estoques disponíveis:**\n"
-            + ("\n".join(f"• {e}" for e in estoques) if estoques else "Nenhum estoque disponível")
-        ),
-        color=discord.Color.blurple()
-    )
+    msg = await canal.send(embed=montar_embed_painel(), view=PainelView())
 
-    await canal.send(embed=embed, view=PainelView())
+    painel_info["canal_id"] = canal.id
+    painel_info["mensagem_id"] = msg.id
 
     await interaction.response.send_message(
         f"✅ Painel enviado em {canal.mention}",
@@ -116,55 +136,59 @@ async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
     )
 
 
-# ========= COMANDOS DE ESTOQUE =========
+# ========= STOCK OPTIONS =========
 
-@bot.tree.command(name="add_stock", description="Adiciona um estoque")
-async def add_stock(interaction: discord.Interaction, nome: str):
+@bot.tree.command(name="stock_option_add", description="Adiciona opções de estoque (separadas por vírgula)")
+async def stock_option_add(interaction: discord.Interaction, nomes: str):
 
-    if not usuario_autorizado(interaction.user):
+    if not autorizado(interaction.user):
         await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
         return
 
-    if nome in estoques:
-        await interaction.response.send_message("⚠️ Esse estoque já existe.", ephemeral=True)
-        return
+    adicionados = []
+    for nome in [n.strip() for n in nomes.split(",")]:
+        if nome and nome not in estoques:
+            estoques.append(nome)
+            adicionados.append(nome)
 
-    estoques.append(nome)
-    await interaction.response.send_message(f"✅ Estoque **{nome}** adicionado.", ephemeral=True)
-
-
-@bot.tree.command(name="remove_stock", description="Remove um estoque")
-async def remove_stock(interaction: discord.Interaction, nome: str):
-
-    if not usuario_autorizado(interaction.user):
-        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
-        return
-
-    if nome not in estoques:
-        await interaction.response.send_message("⚠️ Estoque não encontrado.", ephemeral=True)
-        return
-
-    estoques.remove(nome)
-    await interaction.response.send_message(f"🗑️ Estoque **{nome}** removido.", ephemeral=True)
-
-
-@bot.tree.command(name="list_stock", description="Lista os estoques disponíveis")
-async def list_stock(interaction: discord.Interaction):
-
-    if not usuario_autorizado(interaction.user):
-        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
-        return
-
-    if not estoques:
-        msg = "Nenhum estoque cadastrado."
-    else:
-        msg = "\n".join(f"• {e}" for e in estoques)
+    await atualizar_painel(interaction.guild)
 
     await interaction.response.send_message(
-        f"📦 **Estoques cadastrados:**\n{msg}",
+        f"✅ Adicionados: {', '.join(adicionados) if adicionados else 'Nenhum'}",
         ephemeral=True
     )
 
 
-bot.run(TOKEN)
+@bot.tree.command(name="stock_option_remove", description="Remove opções de estoque (separadas por vírgula)")
+async def stock_option_remove(interaction: discord.Interaction, nomes: str):
 
+    if not autorizado(interaction.user):
+        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        return
+
+    removidos = []
+    for nome in [n.strip() for n in nomes.split(",")]:
+        if nome in estoques:
+            estoques.remove(nome)
+            removidos.append(nome)
+
+    await atualizar_painel(interaction.guild)
+
+    await interaction.response.send_message(
+        f"🗑️ Removidos: {', '.join(removidos) if removidos else 'Nenhum'}",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(name="stock_option_list", description="Lista as opções de estoque")
+async def stock_option_list(interaction: discord.Interaction):
+
+    if not autorizado(interaction.user):
+        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        return
+
+    msg = "\n".join(f"• {e}" for e in estoques) if estoques else "Nenhum estoque."
+    await interaction.response.send_message(f"📦 **Opções:**\n{msg}", ephemeral=True)
+
+
+bot.run(TOKEN)
