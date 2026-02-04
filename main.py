@@ -11,7 +11,7 @@ if not TOKEN:
 intents = discord.Intents.default()
 
 # ===== CONFIGURAÇÕES =====
-CARGOS_AUTORIZADOS = [1369407083623223469]  # IDs dos cargos que podem usar /painel
+CARGOS_AUTORIZADOS = [1468692230607998987]  # IDs dos cargos que podem usar /painel
 CANAL_LOG_ID = 1442639996015214691          # ID do canal de logs
 
 ESTOQUES_DISPONIVEIS = [
@@ -110,3 +110,4 @@ async def painel(interaction: discord.Interaction):
 
 
 bot.run(TOKEN)
+
