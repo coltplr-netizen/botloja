@@ -1,25 +1,25 @@
 import os
 import discord
 from discord import app_commands
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Modal, TextInput
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN não encontrado")
 
 intents = discord.Intents.default()
 
-# ===== CONFIGURAÇÕES =====
-CARGOS_AUTORIZADOS = [1468692230607998987]  # IDs dos cargos que podem usar /painel
+# ========= CONFIGURAÇÕES =========
+CARGOS_AUTORIZADOS = [1468692230607998987]  # ID do cargo autorizado
 CANAL_LOG_ID = 1442639996015214691          # ID do canal de logs
+# =================================
 
-ESTOQUES_DISPONIVEIS = [
+# Estoques (em memória)
+estoques = [
     "Netflix",
     "Spotify",
     "Amazon Prime"
 ]
-# =========================
 
 
 class Bot(discord.Client):
@@ -37,11 +37,16 @@ class Bot(discord.Client):
 bot = Bot()
 
 
-# ===== MODAL =====
+# ========= FUNÇÃO AUXILIAR =========
+def usuario_autorizado(member: discord.Member) -> bool:
+    return any(role.id in CARGOS_AUTORIZADOS for role in member.roles)
+
+
+# ========= MODAL =========
 class PedidoEstoqueModal(Modal, title="📦 Pedido de Estoque"):
     estoque = TextInput(
-        label="Qual estoque você quer?",
-        placeholder="Ex: Netflix, Spotify...",
+        label="Qual estoque deseja?",
+        placeholder="Ex: Netflix",
         required=True
     )
 
@@ -71,22 +76,22 @@ class PedidoEstoqueModal(Modal, title="📦 Pedido de Estoque"):
         )
 
 
-# ===== BOTÃO =====
+# ========= VIEW =========
 class PainelView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="📦 Pedir estoque", style=discord.ButtonStyle.primary)
-    async def pedir(self, interaction: discord.Interaction, button: Button):
+    async def pedir(self, interaction: discord.Interaction, _):
         await interaction.response.send_modal(PedidoEstoqueModal())
 
 
-# ===== COMANDO =====
+# ========= COMANDO PAINEL =========
 @bot.tree.command(name="painel", description="Envia o painel de pedidos de estoque")
-async def painel(interaction: discord.Interaction):
+@app_commands.describe(canal="Canal onde o painel será enviado")
+async def painel(interaction: discord.Interaction, canal: discord.TextChannel):
 
-    # Verificar cargos
-    if not any(role.id in CARGOS_AUTORIZADOS for role in interaction.user.roles):
+    if not usuario_autorizado(interaction.user):
         await interaction.response.send_message(
             "❌ Você não tem permissão para usar este comando.",
             ephemeral=True
@@ -94,18 +99,70 @@ async def painel(interaction: discord.Interaction):
         return
 
     embed = discord.Embed(
-        title="🛒 Painel de Estoque",
+        title="🛒 Pedido de Estoque",
         description=(
             "Clique no botão abaixo para solicitar um estoque.\n\n"
             "**Estoques disponíveis:**\n"
-            + "\n".join(f"• {e}" for e in ESTOQUES_DISPONIVEIS)
+            + ("\n".join(f"• {e}" for e in estoques) if estoques else "Nenhum estoque disponível")
         ),
         color=discord.Color.blurple()
     )
 
+    await canal.send(embed=embed, view=PainelView())
+
     await interaction.response.send_message(
-        embed=embed,
-        view=PainelView()
+        f"✅ Painel enviado em {canal.mention}",
+        ephemeral=True
+    )
+
+
+# ========= COMANDOS DE ESTOQUE =========
+
+@bot.tree.command(name="add_stock", description="Adiciona um estoque")
+async def add_stock(interaction: discord.Interaction, nome: str):
+
+    if not usuario_autorizado(interaction.user):
+        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        return
+
+    if nome in estoques:
+        await interaction.response.send_message("⚠️ Esse estoque já existe.", ephemeral=True)
+        return
+
+    estoques.append(nome)
+    await interaction.response.send_message(f"✅ Estoque **{nome}** adicionado.", ephemeral=True)
+
+
+@bot.tree.command(name="remove_stock", description="Remove um estoque")
+async def remove_stock(interaction: discord.Interaction, nome: str):
+
+    if not usuario_autorizado(interaction.user):
+        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        return
+
+    if nome not in estoques:
+        await interaction.response.send_message("⚠️ Estoque não encontrado.", ephemeral=True)
+        return
+
+    estoques.remove(nome)
+    await interaction.response.send_message(f"🗑️ Estoque **{nome}** removido.", ephemeral=True)
+
+
+@bot.tree.command(name="list_stock", description="Lista os estoques disponíveis")
+async def list_stock(interaction: discord.Interaction):
+
+    if not usuario_autorizado(interaction.user):
+        await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        return
+
+    if not estoques:
+        msg = "Nenhum estoque cadastrado."
+    else:
+        msg = "\n".join(f"• {e}" for e in estoques)
+
+    await interaction.response.send_message(
+        f"📦 **Estoques cadastrados:**\n{msg}",
+        ephemeral=True
     )
 
 
