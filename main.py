@@ -380,7 +380,37 @@ async def ticket_opcao_list(interaction: discord.Interaction):
     texto = "\n".join(f"• {o}" for o in ticket_opcoes)
     await interaction.response.send_message(f"📂 Opções:\n{texto}", ephemeral=True)
 
+@bot.tree.command(name="painel_ticket", description="Envia o painel de tickets")
+@app_commands.describe(canal="Canal onde o painel de tickets será enviado")
+async def painel_ticket(interaction: discord.Interaction, canal: discord.TextChannel):
+
+    if not is_staff(interaction.user):
+        await interaction.response.send_message(
+            "❌ Você não tem permissão para usar este comando.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="🎫 Sistema de Atendimento",
+        description=(
+            "**Bem-vindo ao suporte!**\n\n"
+            "Selecione abaixo o motivo do seu ticket.\n"
+            "Nossa equipe irá atendê-lo o mais rápido possível.\n\n"
+            "_Evite abrir tickets desnecessários._"
+        ),
+        color=discord.Color.dark_blue()
+    )
+
+    await canal.send(embed=embed, view=TicketPanelView())
+
+    await interaction.response.send_message(
+        f"✅ Painel de ticket enviado em {canal.mention}",
+        ephemeral=True
+    )
+
 # ========= RUN =========
 bot.run(TOKEN)
+
 
 
