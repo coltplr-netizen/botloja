@@ -21,6 +21,8 @@ CANAL_LOG_PEDIDOS = 1442639996015214691
 TICKET_CATEGORIA_ID = 1442639995516096563
 CANAL_LOG_TICKET_ID = 1442639996015214690
 CARGO_STAFF_ID = 1442639992823484467
+PAINEL_TICKET_MESSAGE_ID = None
+PAINEL_TICKET_CHANNEL_ID = None
 
 ticket_opcoes = [
     "Suporte",
@@ -52,6 +54,20 @@ def is_staff(member):
 def somente_assumidor(interaction):
     dados = tickets_ativos.get(interaction.channel.id)
     return dados and dados["assumido_por"] == interaction.user
+
+async def atualizar_painel_ticket(guild: discord.Guild):
+    if not PAINEL_TICKET_MESSAGE_ID or not PAINEL_TICKET_CHANNEL_ID:
+        return
+
+    canal = guild.get_channel(PAINEL_TICKET_CHANNEL_ID)
+    if not canal:
+        return
+
+    try:
+        msg = await canal.fetch_message(PAINEL_TICKET_MESSAGE_ID)
+        await msg.edit(view=TicketPanelView())
+    except:
+        pass
 
 # ========= PAINEL LOJA =========
 def montar_embed_painel():
@@ -180,29 +196,42 @@ class UsuarioTicketModal(Modal):
 
         self.usuario = TextInput(
             label="ID do usuário",
-            placeholder="Cole o ID do usuário aqui",
+            placeholder="Cole o ID do usuário",
             required=True
         )
 
     async def on_submit(self, interaction: discord.Interaction):
-        membro = interaction.guild.get_member(int(self.usuario.value))
-
-        if not membro:
-            return await interaction.response.send_message(
-                "❌ Usuário não encontrado.",
+        try:
+            user_id = int(self.usuario.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ ID inválido.",
                 ephemeral=True
             )
+            return
+
+        membro = interaction.guild.get_member(user_id)
+
+        if not membro:
+            await interaction.response.send_message(
+                "❌ Usuário não encontrado no servidor.",
+                ephemeral=True
+            )
+            return
 
         if self.acao == "Adicionar":
             await interaction.channel.set_permissions(
-                membro, view_channel=True, send_messages=True
+                membro,
+                view_channel=True,
+                send_messages=True
             )
-            msg = "➕ Usuário adicionado ao ticket."
+            msg = f"➕ {membro.mention} adicionado ao ticket."
         else:
             await interaction.channel.set_permissions(
-                membro, view_channel=False
+                membro,
+                view_channel=False
             )
-            msg = "➖ Usuário removido do ticket."
+            msg = f"➖ {membro.mention} removido do ticket."
 
         await interaction.response.send_message(msg, ephemeral=True)
 
@@ -261,31 +290,79 @@ class TicketMainView(View):
 
         await interaction.response.send_modal(FecharTicketModal())
 
-class FecharTicketModal(Modal, title="Fechar Ticket"):
+class FecharTicketModal(Modal, title="🔒 Fechar Ticket"):
     motivo = TextInput(
         label="Motivo do encerramento (opcional)",
-        required=False
+        style=discord.TextStyle.paragraph,
+        required=False,
+        placeholder="Ex: Atendimento concluído, cliente inativo..."
     )
 
-    async def on_submit(self, interaction):
+    async def on_submit(self, interaction: discord.Interaction):
         dados = tickets_ativos.get(interaction.channel.id)
 
-        embed = discord.Embed(
-            title="🎫 Ticket Finalizado",
-            color=discord.Color.red()
-        )
-        embed.add_field(name="Responsável", value=dados["assumido_por"].mention)
-        embed.add_field(name="Motivo do ticket", value=dados["motivo"])
-        embed.add_field(name="Motivo do fechamento", value=self.motivo.value or "Não informado")
+        if not dados:
+            await interaction.response.send_message(
+                "❌ Ticket não encontrado.",
+                ephemeral=True
+            )
+            return
 
+        fechamento = datetime.utcnow()
+        duracao = fechamento - dados["abertura"]
+
+        # ===== EMBED ESTILO A IMAGEM =====
+        embed = discord.Embed(
+            title="🔒 Seu Ticket Foi Finalizado!",
+            color=discord.Color.dark_red()
+        )
+
+        embed.add_field(
+            name="🔒 Fechado por",
+            value=dados["assumido_por"].mention,
+            inline=False
+        )
+
+        embed.add_field(
+            name="🙋 Responsável pelo atendimento",
+            value=dados["assumido_por"].mention,
+            inline=False
+        )
+
+        embed.add_field(
+            name="📂 Categoria do Ticket",
+            value=dados["motivo"],
+            inline=False
+        )
+
+        embed.add_field(
+            name="📝 Motivo do Encerramento",
+            value=self.motivo.value or "O atendimento foi finalizado.",
+            inline=False
+        )
+
+        embed.add_field(
+            name="⏳ Duração do Atendimento",
+            value=str(duracao).split(".")[0],
+            inline=False
+        )
+
+        # RESPONDE A INTERACTION (resolve o bug)
+        await interaction.response.send_message(
+            "🔒 Ticket encerrado com sucesso.",
+            ephemeral=True
+        )
+
+        # DM
         try:
             await dados["usuario"].send(embed=embed)
         except:
             pass
 
-        log = interaction.guild.get_channel(CANAL_LOG_TICKET_ID)
-        if log:
-            await log.send(embed=embed)
+        # LOG
+        canal_log = interaction.guild.get_channel(CANAL_LOG_TICKET_ID)
+        if canal_log:
+            await canal_log.send(embed=embed)
 
         await interaction.channel.delete()
 
@@ -362,7 +439,13 @@ async def ticket_opcao_add(interaction: discord.Interaction, nome: str):
         return await interaction.response.send_message("⚠️ Opção já existe.", ephemeral=True)
 
     ticket_opcoes.append(nome)
-    await interaction.response.send_message(f"✅ Opção **{nome}** adicionada.", ephemeral=True)
+
+await atualizar_painel_ticket(interaction.guild)
+
+await interaction.response.send_message(
+    f"✅ Opção **{nome}** adicionada e painel atualizado.",
+    ephemeral=True
+)
 
 @bot.tree.command(name="ticket_opcao_remove")
 async def ticket_opcao_remove(interaction: discord.Interaction, nome: str):
@@ -374,6 +457,16 @@ async def ticket_opcao_remove(interaction: discord.Interaction, nome: str):
 
     ticket_opcoes.remove(nome)
     await interaction.response.send_message(f"🗑️ Opção **{nome}** removida.", ephemeral=True)
+
+ticket_opcoes.remove(nome)
+
+await atualizar_painel_ticket(interaction.guild)
+
+await interaction.response.send_message(
+    f"🗑️ Opção **{nome}** removida e painel atualizado.",
+    ephemeral=True
+)
+
 
 @bot.tree.command(name="ticket_opcao_list")
 async def ticket_opcao_list(interaction: discord.Interaction):
@@ -402,7 +495,11 @@ async def painel_ticket(interaction: discord.Interaction, canal: discord.TextCha
         color=discord.Color.dark_blue()
     )
 
-    await canal.send(embed=embed, view=TicketPanelView())
+    msg = await canal.send(embed=embed, view=TicketPanelView())
+
+global PAINEL_TICKET_MESSAGE_ID, PAINEL_TICKET_CHANNEL_ID
+PAINEL_TICKET_MESSAGE_ID = msg.id
+PAINEL_TICKET_CHANNEL_ID = canal.id
 
     await interaction.response.send_message(
         f"✅ Painel de ticket enviado em {canal.mention}",
@@ -411,6 +508,7 @@ async def painel_ticket(interaction: discord.Interaction, canal: discord.TextCha
 
 # ========= RUN =========
 bot.run(TOKEN)
+
 
 
 
