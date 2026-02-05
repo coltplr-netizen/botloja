@@ -14,11 +14,9 @@ intents = discord.Intents.default()
 intents.members = True
 
 # ========= CONFIG =========
-CARGOS_AUTORIZADOS = [1468692230607998987]
-
+CARGO_STAFF_ID = 1442639992823484467
 TICKET_CATEGORIA_ID = 1442639995516096563
 CANAL_LOG_TICKET_ID = 1442639996015214690
-CARGO_STAFF_ID = 1442639992823484467
 
 PAINEL_TICKET_MESSAGE_ID = None
 PAINEL_TICKET_CHANNEL_ID = None
@@ -47,11 +45,8 @@ class Bot(discord.Client):
 bot = Bot()
 
 # ========= HELPERS =========
-def autorizado(member):
-    return any(role.id in CARGOS_AUTORIZADOS for role in member.roles)
-
 def is_staff(member):
-    return any(role.id == CARGO_STAFF_ID for role in member.roles)
+    return any(r.id == CARGO_STAFF_ID for r in member.roles)
 
 def somente_assumidor(interaction):
     dados = tickets_ativos.get(interaction.channel.id)
@@ -69,15 +64,15 @@ async def atualizar_painel_ticket(guild):
     except:
         pass
 
-# ========= TICKET SELECT =========
+# ========= SELECT =========
 class TicketSelect(Select):
     def __init__(self):
         super().__init__(
-            placeholder="Selecione o motivo do seu ticket",
+            placeholder="Selecione o motivo do ticket",
             options=[discord.SelectOption(label=o) for o in ticket_opcoes]
         )
 
-    async def callback(self, interaction: discord.Interaction):
+    async def callback(self, interaction):
         motivo = self.values[0]
         categoria = interaction.guild.get_channel(TICKET_CATEGORIA_ID)
 
@@ -101,7 +96,7 @@ class TicketSelect(Select):
 
         embed = discord.Embed(
             title="🎫 Ticket Aberto",
-            description=f"📂 Motivo: **{motivo}**\n\nAguarde um atendente.",
+            description=f"📂 Motivo: **{motivo}**\n\nAguarde atendimento.",
             color=discord.Color.blue()
         )
 
@@ -131,28 +126,24 @@ class TicketMainView(View):
             return await interaction.response.send_message("⚠️ Já assumido.", ephemeral=True)
 
         dados["assumido_por"] = interaction.user
-
         await interaction.channel.set_permissions(interaction.user, send_messages=True)
 
         embed = discord.Embed(
             title="🎫 Ticket em Atendimento",
-            description=(
-                f"📂 Motivo: **{dados['motivo']}**\n"
-                f"🙋 Assumido por: {interaction.user.mention}"
-            ),
+            description=f"📂 {dados['motivo']}\n🙋 {interaction.user.mention}",
             color=discord.Color.green()
         )
 
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="🛠️ Painel Staff", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🛠️ Painel Staff")
     async def painel_staff(self, interaction, _):
         if not somente_assumidor(interaction):
-            return await interaction.response.send_message("❌ Apenas o responsável.", ephemeral=True)
+            return await interaction.response.send_message("❌ Apenas responsável.", ephemeral=True)
 
         embed = discord.Embed(
             title="🛠️ Painel Staff",
-            description="Ferramentas internas do ticket",
+            description="Ferramentas do ticket",
             color=discord.Color.dark_grey()
         )
 
@@ -161,39 +152,22 @@ class TicketMainView(View):
     @discord.ui.button(label="🔒 Fechar", style=discord.ButtonStyle.danger)
     async def fechar(self, interaction, _):
         if not somente_assumidor(interaction):
-            return await interaction.response.send_message("❌ Apenas o responsável.", ephemeral=True)
+            return await interaction.response.send_message("❌ Apenas responsável.", ephemeral=True)
         await interaction.response.send_modal(FecharTicketModal())
 
 # ========= MODAIS =========
 class FecharTicketModal(Modal, title="🔒 Fechar Ticket"):
-    motivo = TextInput(
-        label="Motivo (opcional)",
-        style=discord.TextStyle.paragraph,
-        required=False
-    )
+    motivo = TextInput(label="Motivo (opcional)", required=False)
 
     async def on_submit(self, interaction):
         dados = tickets_ativos.get(interaction.channel.id)
-        fechamento = datetime.utcnow()
-        duracao = fechamento - dados["abertura"]
+        duracao = datetime.utcnow() - dados["abertura"]
 
-        embed = discord.Embed(
-            title="🔒 Seu Ticket Foi Finalizado!",
-            color=discord.Color.dark_red()
-        )
-        embed.add_field(name="Fechado por", value=dados["assumido_por"].mention, inline=False)
+        embed = discord.Embed(title="🔒 Ticket Finalizado", color=discord.Color.red())
         embed.add_field(name="Responsável", value=dados["assumido_por"].mention, inline=False)
         embed.add_field(name="Categoria", value=dados["motivo"], inline=False)
-        embed.add_field(
-            name="Motivo do encerramento",
-            value=self.motivo.value or "Atendimento finalizado.",
-            inline=False
-        )
-        embed.add_field(
-            name="Duração",
-            value=str(duracao).split(".")[0],
-            inline=False
-        )
+        embed.add_field(name="Motivo", value=self.motivo.value or "Finalizado", inline=False)
+        embed.add_field(name="Duração", value=str(duracao).split(".")[0], inline=False)
 
         await interaction.response.send_message("🔒 Ticket encerrado.", ephemeral=True)
 
@@ -213,7 +187,7 @@ class RenomearTicketModal(Modal, title="✏️ Renomear Ticket"):
 
     async def on_submit(self, interaction):
         await interaction.channel.edit(name=self.nome.value.lower().replace(" ", "-"))
-        await interaction.response.send_message("✅ Ticket renomeado.", ephemeral=True)
+        await interaction.response.send_message("✅ Renomeado.", ephemeral=True)
 
 class UsuarioTicketModal(Modal):
     def __init__(self, acao):
@@ -224,9 +198,15 @@ class UsuarioTicketModal(Modal):
     async def on_submit(self, interaction):
         dados = tickets_ativos.get(interaction.channel.id)
         if dados["assumido_por"] != interaction.user:
-            return await interaction.response.send_message("❌ Apenas o responsável.", ephemeral=True)
+            return await interaction.response.send_message("❌ Apenas responsável.", ephemeral=True)
 
-        membro = interaction.guild.get_member(int(self.usuario.value))
+        try:
+            membro = interaction.guild.get_member(int(self.usuario.value))
+        except:
+            return await interaction.response.send_message("❌ ID inválido.", ephemeral=True)
+
+        if not membro:
+            return await interaction.response.send_message("❌ Usuário não encontrado.", ephemeral=True)
 
         if self.acao == "Adicionar":
             await interaction.channel.set_permissions(membro, view_channel=True, send_messages=True)
@@ -242,11 +222,11 @@ class TicketStaffView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔔 Notificar membro")
+    @discord.ui.button(label="🔔 Notificar")
     async def notificar(self, interaction, _):
         dados = tickets_ativos.get(interaction.channel.id)
-        await dados["usuario"].send("📢 Há uma atualização no seu ticket.")
-        await interaction.response.send_message("✅ Membro notificado.", ephemeral=True)
+        await dados["usuario"].send("📢 Atualização no seu ticket.")
+        await interaction.response.send_message("✅ Notificado.", ephemeral=True)
 
     @discord.ui.button(label="➕ Adicionar usuário")
     async def add_user(self, interaction, _):
@@ -260,7 +240,7 @@ class TicketStaffView(View):
     async def renomear(self, interaction, _):
         await interaction.response.send_modal(RenomearTicketModal())
 
-    @discord.ui.button(label="📞 Suporte via call")
+    @discord.ui.button(label="📞 Criar call")
     async def call(self, interaction, _):
         dados = tickets_ativos.get(interaction.channel.id)
         call = await interaction.guild.create_voice_channel(
@@ -279,12 +259,12 @@ class TicketStaffView(View):
         dados = tickets_ativos.get(interaction.channel.id)
         embed = discord.Embed(
             title="🎫 Ticket em Atendimento",
-            description=f"📂 Motivo: **{dados['motivo']}**\n🙋 {dados['assumido_por'].mention}",
+            description=f"📂 {dados['motivo']}\n🙋 {dados['assumido_por'].mention}",
             color=discord.Color.green()
         )
         await interaction.response.edit_message(embed=embed, view=TicketMainView())
 
-# ========= COMANDO PAINEL =========
+# ========= COMANDOS =========
 @bot.tree.command(name="painel_ticket")
 async def painel_ticket(interaction, canal: discord.TextChannel):
     if not is_staff(interaction.user):
@@ -292,7 +272,7 @@ async def painel_ticket(interaction, canal: discord.TextChannel):
 
     embed = discord.Embed(
         title="🎫 Sistema de Atendimento",
-        description="Selecione abaixo o motivo do seu ticket.",
+        description="Selecione o motivo abaixo",
         color=discord.Color.dark_blue()
     )
 
@@ -303,6 +283,37 @@ async def painel_ticket(interaction, canal: discord.TextChannel):
     PAINEL_TICKET_CHANNEL_ID = canal.id
 
     await interaction.response.send_message("✅ Painel enviado.", ephemeral=True)
+
+@bot.tree.command(name="ticket_opcao_add")
+async def ticket_opcao_add(interaction, nome: str):
+    if not is_staff(interaction.user):
+        return await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
+
+    if nome in ticket_opcoes:
+        return await interaction.response.send_message("⚠️ Já existe.", ephemeral=True)
+
+    ticket_opcoes.append(nome)
+    await atualizar_painel_ticket(interaction.guild)
+
+    await interaction.response.send_message("✅ Opção adicionada.", ephemeral=True)
+
+@bot.tree.command(name="ticket_opcao_remove")
+async def ticket_opcao_remove(interaction, nome: str):
+    if not is_staff(interaction.user):
+        return await interaction.response.send_message("❌ Apenas staff.", ephemeral=True)
+
+    if nome not in ticket_opcoes:
+        return await interaction.response.send_message("⚠️ Não existe.", ephemeral=True)
+
+    ticket_opcoes.remove(nome)
+    await atualizar_painel_ticket(interaction.guild)
+
+    await interaction.response.send_message("🗑️ Opção removida.", ephemeral=True)
+
+@bot.tree.command(name="ticket_opcao_list")
+async def ticket_opcao_list(interaction):
+    texto = "\n".join(f"• {o}" for o in ticket_opcoes)
+    await interaction.response.send_message(f"📂 Opções:\n{texto}", ephemeral=True)
 
 # ========= RUN =========
 bot.run(TOKEN)
